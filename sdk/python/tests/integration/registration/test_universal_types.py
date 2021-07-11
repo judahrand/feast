@@ -43,19 +43,14 @@ def populate_test_configs(offline: bool):
                     and feature_is_list is True
                 ):
                     continue
-                for list_is_empty in [True, False]:
-                    configs.append(
-                        TypeTestConfig(
-                            entity_type=entity_type,
-                            feature_dtype=feature_dtype,
-                            feature_is_list=feature_is_list,
-                            list_is_empty=list_is_empty,
-                            test_repo_config=test_repo_config,
-                        )
+                configs.append(
+                    TypeTestConfig(
+                        entity_type=entity_type,
+                        feature_dtype=feature_dtype,
+                        feature_is_list=feature_is_list,
+                        test_repo_config=test_repo_config,
                     )
-                    # For non list features `list_is_empty` does nothing
-                    if feature_is_list is False:
-                        continue
+                )
     return configs
 
 
@@ -64,7 +59,6 @@ class TypeTestConfig:
     entity_type: ValueType
     feature_dtype: str
     feature_is_list: bool
-    list_is_empty: bool
     test_repo_config: IntegrationTestRepoConfig
 
 
@@ -102,10 +96,7 @@ def get_fixtures(request):
     ) as type_test_environment:
         config = request.param
         df = create_dataset(
-            config.entity_type,
-            config.feature_dtype,
-            config.feature_is_list,
-            config.list_is_empty,
+            config.entity_type, config.feature_dtype, config.feature_is_list
         )
         data_source = type_test_environment.data_source_creator.create_data_source(
             df,
