@@ -1,6 +1,5 @@
 import functools
-from types import MethodType
-from typing import Dict, List, Union, cast
+from typing import Dict, List, Protocol, Union, cast
 
 import dill
 import pandas as pd
@@ -21,12 +20,22 @@ from feast.protos.feast.core.OnDemandFeatureView_pb2 import (
 from feast.protos.feast.core.OnDemandFeatureView_pb2 import (
     UserDefinedFunction as UserDefinedFunctionProto,
 )
+from feast.python_types import ValidType
 from feast.type_map import (
     feast_value_type_to_pandas_type,
     python_type_to_feast_value_type,
 )
 from feast.usage import log_exceptions
 from feast.value_type import ValueType
+
+UserDefinedTransformOutput = Dict[str, List[ValidType]]
+
+
+class UserDefinedTransform(Protocol):
+    __name__: str
+
+    def __call__(self, df: pd.DataFrame) -> Dict[str, UserDefinedTransformOutput]:
+        pass
 
 
 class OnDemandFeatureView:
@@ -43,7 +52,7 @@ class OnDemandFeatureView:
     name: str
     features: List[Feature]
     inputs: Dict[str, Union[FeatureView, RequestDataSource]]
-    udf: MethodType
+    udf: UserDefinedTransform
 
     @log_exceptions
     def __init__(
@@ -51,7 +60,7 @@ class OnDemandFeatureView:
         name: str,
         features: List[Feature],
         inputs: Dict[str, Union[FeatureView, RequestDataSource]],
-        udf: MethodType,
+        udf: UserDefinedTransform,
     ):
         """
         Creates an OnDemandFeatureView object.
@@ -154,7 +163,8 @@ class OnDemandFeatureView:
                         columns_to_cleanup.append(feature.name)
 
         # Compute transformed values and apply to each result row
-        df_with_transformed_features = self.udf.__call__(df_with_features)
+        with_transformed_features = self.udf.__call__(df_with_features)
+        df_with_transformed_features = pd.DataFrame.from_dict(with_transformed_features)
 
         # Cleanup extra columns used for transformation
         df_with_features.drop(columns=columns_to_cleanup, inplace=True)

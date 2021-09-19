@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, TypedDict, Union
 
 import pandas as pd
 
@@ -37,13 +37,18 @@ def global_feature_view(
     )
 
 
-def conv_rate_plus_100(features_df: pd.DataFrame) -> pd.DataFrame:
+class ConvRatePlus100(TypedDict):
+    conv_rate_plus_100: float
+    conv_rate_plus_val_to_add: float
+
+
+def conv_rate_plus_100(features_df: pd.DataFrame) -> ConvRatePlus100:
     df = pd.DataFrame()
     df["conv_rate_plus_100"] = features_df["conv_rate"] + 100
     df["conv_rate_plus_val_to_add"] = (
         features_df["conv_rate"] + features_df["val_to_add"]
     )
-    return df
+    return df.to_dict("series", into=ConvRatePlus100)
 
 
 def conv_rate_plus_100_feature_view(
