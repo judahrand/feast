@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from feast.infra.offline_stores.offline_store import RetrievalJob
-from feast.type_map import python_type_to_feast_value_type
+from feast.type_map import python_value_to_feast_value_type
 from feast.value_type import ValueType
 from tests.data.data_creator import create_dataset, get_feature_values_for_dtype
 from tests.integration.feature_repos.repo_configuration import (
@@ -219,9 +219,9 @@ def test_feature_get_online_features_types_match(online_types_test_fixtures):
 def create_feature_view(feature_dtype, feature_is_list, data_source):
     return driver_feature_view(
         data_source,
-        value_type=python_type_to_feast_value_type(
+        value_type=python_value_to_feast_value_type(
             feature_dtype,
-            value=get_feature_values_for_dtype(feature_dtype, feature_is_list)[0],
+            get_feature_values_for_dtype(feature_dtype, feature_is_list)[0],
         ),
     )
 

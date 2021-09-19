@@ -193,13 +193,16 @@ class OnDemandFeatureView:
                 for feature_name, feature_type in request_data.schema.items():
                     dtype = feast_value_type_to_pandas_type(feature_type)
                     df[f"{feature_name}"] = pd.Series(dtype=dtype)
-        output_df: pd.DataFrame = self.udf.__call__(df)
+
+        # Use the UserDefinedTransform's return annotation to determine output types.
+        return_annotation = self.udf.__annotations__["return"]
+        if not hasattr(return_annotation.__annotations__):
+            raise ValueError("User defined transform must return a `TypedDict`")
+
         inferred_features = []
-        for f, dt in zip(output_df.columns, output_df.dtypes):
+        for f, dt in return_annotation.__annotations__:
             inferred_features.append(
-                Feature(
-                    name=f, dtype=python_type_to_feast_value_type(f, type_name=str(dt))
-                )
+                Feature(name=f, dtype=python_type_to_feast_value_type(dt))
             )
 
         if self.features:

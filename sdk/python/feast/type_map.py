@@ -14,23 +14,31 @@
 
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from google.protobuf.json_format import MessageToDict
-from google.protobuf.timestamp_pb2 import Timestamp
+from google.protobuf.timestamp_pb2 import Timestamp as ProtoTimestamp
 
-from feast.protos.feast.types.Value_pb2 import (
-    BoolList,
-    BytesList,
-    DoubleList,
-    FloatList,
-    Int32List,
-    Int64List,
-    StringList,
-)
+from feast.protos.feast.types.Value_pb2 import BoolList as ProtoBoolList
+from feast.protos.feast.types.Value_pb2 import BytesList as ProtoBytesList
+from feast.protos.feast.types.Value_pb2 import DoubleList as ProtoDoubleList
+from feast.protos.feast.types.Value_pb2 import FloatList as ProtoFloatList
+from feast.protos.feast.types.Value_pb2 import Int32List as ProtoInt32List
+from feast.protos.feast.types.Value_pb2 import Int64List as ProtoInt64List
+from feast.protos.feast.types.Value_pb2 import StringList as ProtoStringList
 from feast.protos.feast.types.Value_pb2 import Value as ProtoValue
+from feast.python_types import Bool as PythonBool
+from feast.python_types import Bytes as PythonBytes
+from feast.python_types import Double as PythonDouble
+from feast.python_types import Float as PythonFloat
+from feast.python_types import Int32 as PythonInt32
+from feast.python_types import Int64 as PythonInt64
+from feast.python_types import String as PythonString
+from feast.python_types import Timestamp as PythonTimestamp
+from feast.python_types import ValidType as PythonValidType
 from feast.value_type import ValueType
 
 
@@ -91,23 +99,66 @@ def feast_value_type_to_pandas_type(value_type: ValueType) -> Any:
     )
 
 
-def python_type_to_feast_value_type(
-    name: str, value: Any = None, recurse: bool = True, type_name: Optional[str] = None
+def python_type_to_feast_value_type(typ: Type,) -> ValueType:
+    """
+    Finds the equivalent Feast Value Type for a Python type.
+
+    Args:
+        value: Value that will be inspected
+
+    Returns:
+        Feast Value Type
+    """
+    type_map = {
+        PythonInt64: "INT64",
+        PythonInt32: "INT32",
+        PythonFloat: "FLOAT",
+        PythonDouble: "DOUBLE",
+        PythonBool: "BOOL",
+        PythonString: "STRING",
+        PythonBytes: "BYTES",
+        PythonTimestamp: "UNIX_TIMESTAMP",
+    }
+
+    # Maybe strip `Optional`
+    typ = typ.__args__[0] if typ.__origin__ is Optional else typ
+
+    is_list = False
+    if getattr(typ, "__origin__", None) in (list, List,):
+        is_list = True
+        type_name = typ.__args__[0]
+    elif getattr(typ, "__origin__", None) in (np.ndarray, npt.NDArray):
+        is_list = True
+        type_name = typ.__args__[-1].__args__[0]  # Python type
+
+    for py_typ, feast_typ in type_map.items():
+        # Extract types from `Union`
+        valid_types = (
+            py_typ,
+            Union  # type: ignore
+            if getattr(py_typ, "__origin__", None) is Union
+            else (py_typ,),
+        )
+        if type_name in valid_types:
+            return getattr(ValueType, feast_typ + "_LIST" if is_list else feast_typ)
+
+    raise ValueError("Invalid type annotation.")
+
+
+def python_value_to_feast_value_type(
+    name: str, value: Any = None, recurse: bool = True,
 ) -> ValueType:
     """
     Finds the equivalent Feast Value Type for a Python value. Both native
     and Pandas types are supported. This function will recursively look
     for nested types when arrays are detected. All types must be homogenous.
-
     Args:
         name: Name of the value or field
         value: Value that will be inspected
         recurse: Whether to recursively look for nested types in arrays
-
     Returns:
         Feast Value Type
     """
-    type_name = type_name or type(value).__name__
 
     type_map = {
         "int": ValueType.INT64,
@@ -131,10 +182,7 @@ def python_type_to_feast_value_type(
         "category": ValueType.STRING,
     }
 
-    if type_name in type_map:
-        return type_map[type_name]
-
-    if type_name == "ndarray" or isinstance(value, list):
+    if isinstance(value, list):
         if recurse:
 
             # Convert to list type
@@ -149,7 +197,7 @@ def python_type_to_feast_value_type(
                     )
                 else:
                     # Get the type from the current item, only one level deep
-                    current_item_value_type = python_type_to_feast_value_type(
+                    current_item_value_type = python_value_to_feast_value_type(
                         name=name, value=item, recurse=False
                     )
                 # Validate whether the type stays consistent
@@ -171,7 +219,7 @@ def python_type_to_feast_value_type(
         else:
             assert value
             raise ValueError(
-                f"Value type for field {name} is {value.dtype.__str__()} but "
+                f"Value type for field {name} is {np.array(value).dtype.__str__()} but "
                 f"recursion is not allowed. Array types can only be one level "
                 f"deep."
             )
@@ -186,25 +234,25 @@ def _type_err(item, dtype):
 
 PYTHON_LIST_VALUE_TYPE_TO_PROTO_VALUE: Dict[Any, Tuple[Any, str, List[Any]]] = {
     ValueType.FLOAT_LIST: (
-        FloatList,
+        ProtoFloatList,
         "float_list_val",
         [np.float32, np.float64, float],
     ),
     ValueType.DOUBLE_LIST: (
-        DoubleList,
+        ProtoDoubleList,
         "double_list_val",
         [np.float64, np.float32, float],
     ),
-    ValueType.INT32_LIST: (Int32List, "int32_list_val", [np.int32, int]),
-    ValueType.INT64_LIST: (Int64List, "int64_list_val", [np.int64, np.int32, int]),
+    ValueType.INT32_LIST: (ProtoInt32List, "int32_list_val", [np.int32, int]),
+    ValueType.INT64_LIST: (ProtoInt64List, "int64_list_val", [np.int64, np.int32, int]),
     ValueType.UNIX_TIMESTAMP_LIST: (
-        Int64List,
+        ProtoInt64List,
         "int64_list_val",
         [np.int64, np.int32, int],
     ),
-    ValueType.STRING_LIST: (StringList, "string_list_val", [np.str_, str]),
-    ValueType.BOOL_LIST: (BoolList, "bool_list_val", [np.bool_, bool]),
-    ValueType.BYTES_LIST: (BytesList, "bytes_list_val", [np.bytes_, bytes]),
+    ValueType.STRING_LIST: (ProtoStringList, "string_list_val", [np.str_, str]),
+    ValueType.BOOL_LIST: (ProtoBoolList, "bool_list_val", [np.bool_, bool]),
+    ValueType.BYTES_LIST: (ProtoBytesList, "bytes_list_val", [np.bytes_, bytes]),
 }
 
 PYTHON_SCALAR_VALUE_TYPE_TO_PROTO_VALUE: Dict[
@@ -257,7 +305,7 @@ def _python_value_to_proto_value(feast_value_type, value) -> ProtoValue:
         elif feast_value_type == ValueType.UNIX_TIMESTAMP:
             if isinstance(value, datetime):
                 return ProtoValue(int64_val=int(value.timestamp()))
-            elif isinstance(value, Timestamp):
+            elif isinstance(value, ProtoTimestamp):
                 return ProtoValue(int64_val=int(value.ToSeconds()))
             return ProtoValue(int64_val=int(value))
         elif feast_value_type in PYTHON_SCALAR_VALUE_TYPE_TO_PROTO_VALUE:
@@ -275,10 +323,10 @@ def _python_value_to_proto_value(feast_value_type, value) -> ProtoValue:
 
 
 def python_value_to_proto_value(
-    value: Any, feature_type: ValueType = None
+    value: PythonValidType, feature_type: ValueType = None
 ) -> ProtoValue:
     value_type = (
-        python_type_to_feast_value_type("", value)
+        python_value_to_feast_value_type("", value)
         if value is not None
         else feature_type
     )

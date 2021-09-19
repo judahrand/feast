@@ -25,7 +25,7 @@ from feast.protos.feast.types.Value_pb2 import Value as Value
 from feast.type_map import (
     _python_value_to_proto_value,
     feast_value_type_to_python_type,
-    python_type_to_feast_value_type,
+    python_value_to_feast_value_type,
 )
 
 
@@ -103,7 +103,7 @@ def _infer_online_entity_rows(
                 proto_value = value
             else:
                 # Infer the specific type for this row
-                current_dtype = python_type_to_feast_value_type(name=key, value=value)
+                current_dtype = python_value_to_feast_value_type(name=key, value=value)
 
                 if key not in entity_type_map:
                     entity_type_map[key] = current_dtype
