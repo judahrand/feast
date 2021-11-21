@@ -1,3 +1,122 @@
+[tool.poetry]
+name = "feast"
+repository = "https://github.com/feast-dev/feast"
+version = "0.15.1"
+description = "Python SDK for Feast"
+readme = "README.md"
+authors = ["Feast"]
+license = "Apache"
+classifiers = [
+  # Trove classifiers
+  # Full list: https://pypi.python.org/pypi?%3Aaction=list_classifiers
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+]
+packages = [
+  { include = "protos/feast/**/*.proto" },
+  { include = "protos/feast/third_party/grpc/health/v1/*.proto" },
+  { include = "feast/protos/feast/**/*.py" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.7,<3.11"
+click = "^7"
+colorama = "^0.4"
+dill = "^0.3"
+fastavro = "^1.1"
+google-api-core = "^1.23"
+googleapis-common-protos = "^1.52"
+grpcio = "^1.34"
+grpcio-reflection = "^1.34"
+jinja2 = "^2"
+jsonschema = "^4.2.1"
+mmh3 = "^3.0.0"
+pandas = "^1.0"
+pandavro = "^1.5.0"
+protobuf = "^3.10"
+proto-plus = "<1.19.7"
+pyarrow = "^4"
+pydantic = "^1"
+PyYAML = "^5.4.0"
+tabulate = "^0.8.0"
+tenacity = "^7.0"
+toml = "^0.10.0"
+tqdm = "^4.0"
+fastapi = "^0.68"
+uvicorn = {version = "^0.14", extras = ["standard"]}
+tensorflow-metadata = "^1.0"
+
+# GCP_REQUIRED
+google-cloud-bigquery = { version = "^2.28", optional = true }
+google-cloud-bigquery-storage = { version = "^2.0", optional = true }
+google-cloud-datastore = { version = "^2.1", optional = true }
+google-cloud-storage = { version = ">=1.34.*,<1.41", optional = true }
+google-cloud-core = { version = "^1.4", optional = true }
+
+# REDIS_REQUIRED
+redis-py-cluster = { version = "2.1.2", optional = true }
+hiredis = { version = "^2.0", optional = true }
+
+# AWS_REQUIRED
+boto3 = { version = "^1.17.0", optional = true }
+docker = { version = "^5.0.2", optional = true }
+
+[tool.poetry.dev-dependencies]
+cryptography = "3.3.2"
+flake8 = "^4.0.1"
+black = "^21.11b1"
+isort = "^5.10.1"
+grpcio-testing = "1.34.0"
+grpcio-tools = "1.34.0"
+minio = "7.1.0"
+mock = "2.0.0"
+moto = "^2.2.15"
+mypy = "0.790"
+mypy-protobuf = "1.24"
+avro = "1.10.0"
+gcsfs = "^2021.11.0"
+urllib3 = "^1.25"
+pytest = "6.0.0"
+pytest-cov = "^3.0.0"
+pytest-xdist = "^2.4.0"
+pytest-benchmark = "^3.4.1"
+pytest-lazy-fixture = "0.6.3"
+pytest-timeout = "1.4.2"
+pytest-ordering = "^0.6"
+pytest-mock = "1.10.4"
+Sphinx = "^4.3.0"
+sphinx-rtd-theme = "^1.0.0"
+testcontainers = "3.4.2,"
+adlfs = "0.5.9"
+firebase-admin = "4.5.2"
+pre-commit = "^2.15.0"
+assertpy = "1.1"
+
+[tool.poetry.extras]
+gcp = [
+  "google-cloud-bigquery",
+  "google-cloud-bigquery-storage",
+  "google-cloud-datastore",
+  "google-cloud-storage",
+  "google-cloud-core",
+]
+aws = [
+  "boto3",
+  "docker",
+]
+redis = [
+  "redis-py-cluster",
+  "hiredis",
+]
+
+[tool.poetry.scripts]
+feast = "feast.cli:cli"
+
 [tool.black]
 line-length = 88
 target-version = ['py37']
@@ -21,3 +140,7 @@ exclude = '''
   )/
 )
 '''
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
