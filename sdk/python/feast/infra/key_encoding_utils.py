@@ -1,22 +1,26 @@
 import struct
-from typing import List, Tuple
+from typing import List, Union
 
-from feast.protos.feast.types.EntityKey_pb2 import EntityKey as EntityKeyProto
-from feast.protos.feast.types.Value_pb2 import Value as ValueProto
-from feast.protos.feast.types.Value_pb2 import ValueType
+import pyarrow as pa
+import pyarrow.types
 
 
-def _serialize_val(value_type, v: ValueProto) -> Tuple[bytes, int]:
-    if value_type == "string_val":
-        return v.string_val.encode("utf8"), ValueType.STRING
-    elif value_type == "bytes_val":
-        return v.bytes_val, ValueType.BYTES
-    elif value_type == "int32_val":
-        return struct.pack("<i", v.int32_val), ValueType.INT32
-    elif value_type == "int64_val":
-        return struct.pack("<l", v.int64_val), ValueType.INT64
+def _serialize_vals(values: Union[pa.Array, pa.ChunkedArray]) -> List[bytes]:
+    if hasattr(values, "combine_chunks"):
+        values = values.combine_chunks()
+
+    pa_type = values.type
+    if pa.types.is_string(pa_type):
+        val_bytes = [val.encode("utf8") for val in values.to_pylist()]
+    elif pa.types.is_binary(pa_type):
+        val_bytes = values.to_pylist()
+    elif pa.types.is_int32(pa_type):
+        val_bytes = [struct.pack("<i", val) for val in values.to_pylist()]
+    elif pa.types.is_int64(pa_type):
+        val_bytes = [struct.pack("<l", val) for val in values.to_pylist()]
     else:
-        raise ValueError(f"Value type not supported for Firestore: {v}")
+        raise ValueError(f"Value type not supported for Firestore: {pa_type}")
+    return [struct.pack("<I", len(b)) + b for b in val_bytes]
 
 
 def serialize_entity_key_prefix(entity_keys: List[str]) -> bytes:
@@ -30,12 +34,12 @@ def serialize_entity_key_prefix(entity_keys: List[str]) -> bytes:
     sorted_keys = sorted(entity_keys)
     output: List[bytes] = []
     for k in sorted_keys:
-        output.append(struct.pack("<I", ValueType.STRING))
+        output.append(struct.pack("<I", pa.string().id))
         output.append(k.encode("utf8"))
     return b"".join(output)
 
 
-def serialize_entity_key(entity_key: EntityKeyProto) -> bytes:
+def serialize_entity_keys(entity_key: Union[pa.Table, pa.RecordBatch]) -> bytes:
     """
     Serialize entity key to a bytestring so it can be used as a lookup key in a hash table.
 
@@ -45,20 +49,18 @@ def serialize_entity_key(entity_key: EntityKeyProto) -> bytes:
 
     [1] https://developers.google.com/protocol-buffers/docs/encoding
     """
-    sorted_keys, sorted_values = zip(
-        *sorted(zip(entity_key.join_keys, entity_key.entity_values))
-    )
+    if hasattr(entity_key, "from_batches"):
+        entity_key = entity_key.from_batches([entity_key])
+    entity_key = entity_key.select(sorted(entity_key.schema.names))
 
-    output: List[bytes] = []
-    for k in sorted_keys:
-        output.append(struct.pack("<I", ValueType.STRING))
-        output.append(k.encode("utf8"))
-    for v in sorted_values:
-        val_bytes, value_type = _serialize_val(v.WhichOneof("val"), v)
+    key_def_bin: List[bytes] = []
+    for field in entity_key.schema:
+        key_def_bin.append(struct.pack("<I", pa.string().id))
+        key_def_bin.append(field.name.encode("utf8"))
+        key_def_bin.append(struct.pack("<I", field.type.id))
 
-        output.append(struct.pack("<I", value_type))
-
-        output.append(struct.pack("<I", len(val_bytes)))
-        output.append(val_bytes)
-
-    return b"".join(output)
+    key_val_bins: List[List[bytes]] = [[]] * entity_key.num_rows
+    for column in entity_key.columns:
+        for old, new in zip(key_val_bins, _serialize_vals(column)):
+            old.append(new)
+    return [b"".join(key_def_bin + key_val_bin) for key_val_bin in key_val_bins]

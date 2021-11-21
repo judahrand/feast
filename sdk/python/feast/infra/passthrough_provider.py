@@ -146,15 +146,15 @@ class PassthroughProvider(Provider):
         if feature_view.batch_source.field_mapping is not None:
             table = _run_field_mapping(table, feature_view.batch_source.field_mapping)
 
-        join_keys = [entity.join_key for entity in entities]
+        # join_keys = [entity.join_key for entity in entities]
 
         with tqdm_builder(table.num_rows) as pbar:
             for batch in table.to_batches(DEFAULT_BATCH_SIZE):
-                rows_to_write = _convert_arrow_to_proto(batch, feature_view, join_keys)
+                # rows_to_write = _convert_arrow_to_proto(batch, feature_view, join_keys)
                 self.online_write_batch(
                     self.repo_config,
                     feature_view,
-                    rows_to_write,
+                    batch,
                     lambda x: pbar.update(x),
                 )
 

@@ -19,18 +19,19 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import pytz
+import pyarrow as pa
 from pydantic import StrictStr
 from pydantic.schema import Literal
 
 from feast import Entity, FeatureTable
 from feast.feature_view import FeatureView
-from feast.infra.key_encoding_utils import serialize_entity_key
+from feast.infra.key_encoding_utils import serialize_entity_key, serialize_entity_keys
 from feast.infra.online_stores.online_store import OnlineStore
 from feast.protos.feast.types.EntityKey_pb2 import EntityKey as EntityKeyProto
 from feast.protos.feast.types.Value_pb2 import Value as ValueProto
 from feast.repo_config import FeastConfigBaseModel, RepoConfig
 from feast.usage import log_exceptions_and_usage, tracing_span
-
+from feast.infra.provider import _get_column_names
 
 class SqliteOnlineStoreConfig(FeastConfigBaseModel):
     """ Online store config for local (SQLite-based) store """
@@ -79,64 +80,72 @@ class SqliteOnlineStore(OnlineStore):
         self,
         config: RepoConfig,
         table: Union[FeatureTable, FeatureView],
-        data: List[
-            Tuple[EntityKeyProto, Dict[str, ValueProto], datetime, Optional[datetime]]
-        ],
+        entities: List[Entity],
+        data: Union[pa.Table, pa.RecordBatch],
         progress: Optional[Callable[[int], Any]],
     ) -> None:
+        if hasattr(data, "from_batches"):
+            data = data.from_batches([data])
 
         conn = self._get_conn(config)
 
         project = config.project
 
+        (
+            entity_cols,
+            feature_cols,
+            event_ts_col,
+            created_ts_col,
+        ) = _get_column_names(table, entities)
+
+        entity_key_bin = serialize_entity_keys(data.select([entity_cols]))
+        features_bin = [batch.serialize() for batch in data.select([feature_cols]).to_batches(1)]
+        event_ts = [_to_naive_utc(ts) for ts in data.column(event_ts_col).to_pylist()]
+        created_ts = [_to_naive_utc(ts) if ts is not None else ts for ts in data.column(created_ts_col).to_pylist()]
+
         with conn:
-            for entity_key, values, timestamp, created_ts in data:
-                entity_key_bin = serialize_entity_key(entity_key)
-                timestamp = _to_naive_utc(timestamp)
-                if created_ts is not None:
-                    created_ts = _to_naive_utc(created_ts)
+            for entity_key, value, event, created in zip(entity_key_bin, features_bin, event_ts, created_ts):
+                conn.execute(
+                    f"""
+                        UPDATE {_table_id(project, table)}
+                        SET value = ?, event_ts = ?, created_ts = ?
+                        WHERE (entity_key = ?)
+                    """,
+                    (
+                        # SET
+                        value,
+                        event,
+                        created,
+                        # WHERE
+                        entity_key,
+                    ),
+                )
 
-                for feature_name, val in values.items():
-                    conn.execute(
-                        f"""
-                            UPDATE {_table_id(project, table)}
-                            SET value = ?, event_ts = ?, created_ts = ?
-                            WHERE (entity_key = ? AND feature_name = ?)
-                        """,
-                        (
-                            # SET
-                            val.SerializeToString(),
-                            timestamp,
-                            created_ts,
-                            # WHERE
-                            entity_key_bin,
-                            feature_name,
-                        ),
-                    )
-
-                    conn.execute(
-                        f"""INSERT OR IGNORE INTO {_table_id(project, table)}
-                            (entity_key, feature_name, value, event_ts, created_ts)
-                            VALUES (?, ?, ?, ?, ?)""",
-                        (
-                            entity_key_bin,
-                            feature_name,
-                            val.SerializeToString(),
-                            timestamp,
-                            created_ts,
-                        ),
-                    )
-                if progress:
-                    progress(1)
+                conn.execute(
+                    f"""INSERT OR IGNORE INTO {_table_id(project, table)}
+                        (entity_key, value, event_ts, created_ts)
+                        VALUES (?, ?, ?, ?)""",
+                    (
+                        entity_key,
+                        value,
+                        event,
+                        created,
+                    ),
+                )
+            if progress:
+                progress(1)
 
     @log_exceptions_and_usage(online_store="sqlite")
     def online_read(
         self,
         config: RepoConfig,
         table: Union[FeatureTable, FeatureView],
-        entity_keys: List[EntityKeyProto],
+        entity_keys: Union[pa.Table, pa.RecordBatch],
         requested_features: Optional[List[str]] = None,
     ) -> List[Tuple[Optional[datetime], Optional[Dict[str, ValueProto]]]]:
+        if hasattr(entity_keys, "from_batches"):
+            entity_keys = entity_keys.from_batches([entity_keys])
+
         conn = self._get_conn(config)
         cur = conn.cursor()
 
@@ -145,7 +154,7 @@ class SqliteOnlineStore(OnlineStore):
         with tracing_span(name="remote_call"):
             # Fetch all entities in one go
             cur.execute(
-                f"SELECT entity_key, feature_name, value, event_ts "
+                f"SELECT entity_key, value "
                 f"FROM {_table_id(config.project, table)} "
                 f"WHERE entity_key IN ({','.join('?' * len(entity_keys))}) "
                 f"ORDER BY entity_key",
@@ -154,7 +163,7 @@ class SqliteOnlineStore(OnlineStore):
             rows = cur.fetchall()
 
         rows = {
-            k: list(group) for k, group in itertools.groupby(rows, key=lambda r: r[0])
+            k: v for k, v in itertools.groupby(rows, key=lambda r: r[0])
         }
         for entity_key in entity_keys:
             entity_key_bin = serialize_entity_key(entity_key)
@@ -187,7 +196,7 @@ class SqliteOnlineStore(OnlineStore):
 
         for table in tables_to_keep:
             conn.execute(
-                f"CREATE TABLE IF NOT EXISTS {_table_id(project, table)} (entity_key BLOB, feature_name TEXT, value BLOB, event_ts timestamp, created_ts timestamp,  PRIMARY KEY(entity_key, feature_name))"
+                f"CREATE TABLE IF NOT EXISTS {_table_id(project, table)} (entity_key BLOB,  value BLOB, event_ts timestamp, created_ts timestamp,  PRIMARY KEY(entity_key))"
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {_table_id(project, table)}_ek ON {_table_id(project, table)} (entity_key);"
