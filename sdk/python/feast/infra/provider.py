@@ -300,7 +300,17 @@ def _convert_arrow_to_proto(
     table: Union[pyarrow.Table, pyarrow.RecordBatch],
     feature_view: FeatureView,
     join_keys: List[str],
-) -> List[Tuple[EntityKeyProto, Dict[str, ValueProto], datetime, Optional[datetime]]]:
+) -> List[Tuple[EntityKeyProto, pyarrow.RecordBatch, datetime, Optional[datetime]]]:
+    # Cheap to convert to Table and easier to work with
+    if isinstance(table, pyarrow.RecordBatch):
+        table = pyarrow.Table.from_batches([table])
+
+    # Determine purpose of columns
+    non_feature_cols = join_keys + [feature_view.batch_source.event_timestamp_column]
+    if feature_view.batch_source.created_timestamp_column:
+        non_feature_cols.append(feature_view.batch_source.created_timestamp_column)
+    feature_cols = [col for col in table.schema.names if col not in non_feature_cols]
+
     # Handle join keys
     join_key_values = {k: table.column(k).to_pylist() for k in join_keys}
     entity_keys = [
@@ -314,14 +324,7 @@ def _convert_arrow_to_proto(
     ]
 
     # Serialize the features per row
-    feature_dict = {
-        feature.name: [
-            python_value_to_proto_value(val, feature.dtype)
-            for val in table.column(feature.name).to_pylist()
-        ]
-        for feature in feature_view.features
-    }
-    features = [dict(zip(feature_dict, vars)) for vars in zip(*feature_dict.values())]
+    features = [row for row in table.select(feature_cols).to_batches(1)]
 
     # Convert event_timestamps
     event_timestamps = [
