@@ -27,12 +27,10 @@ from feast.errors import (
     ConflictingFeatureViewNames,
     EntityNotFoundException,
     FeatureServiceNotFoundException,
-    FeatureTableNotFoundException,
     FeatureViewNotFoundException,
     OnDemandFeatureViewNotFoundException,
 )
 from feast.feature_service import FeatureService
-from feast.feature_table import FeatureTable
 from feast.feature_view import FeatureView
 from feast.on_demand_feature_view import OnDemandFeatureView
 from feast.protos.feast.core.Registry_pb2 import Registry as RegistryProto
@@ -263,37 +261,6 @@ class Registry:
                 return Entity.from_proto(entity_proto)
         raise EntityNotFoundException(name, project=project)
 
-    def apply_feature_table(
-        self, feature_table: FeatureTable, project: str, commit: bool = True
-    ):
-        """
-        Registers a single feature table with Feast
-
-        Args:
-            feature_table: Feature table that will be registered
-            project: Feast project that this feature table belongs to
-            commit: Whether the change should be persisted immediately
-        """
-        feature_table.is_valid()
-        feature_table_proto = feature_table.to_proto()
-        feature_table_proto.spec.project = project
-        self._prepare_registry_for_changes()
-        assert self.cached_registry_proto
-
-        for idx, existing_feature_table_proto in enumerate(
-            self.cached_registry_proto.feature_tables
-        ):
-            if (
-                existing_feature_table_proto.spec.name == feature_table_proto.spec.name
-                and existing_feature_table_proto.spec.project == project
-            ):
-                del self.cached_registry_proto.feature_tables[idx]
-                break
-
-        self.cached_registry_proto.feature_tables.append(feature_table_proto)
-        if commit:
-            self.commit()
-
     def apply_feature_view(
         self, feature_view: BaseFeatureView, project: str, commit: bool = True
     ):
@@ -439,23 +406,6 @@ class Registry:
 
         raise FeatureViewNotFoundException(feature_view.name, project)
 
-    def list_feature_tables(self, project: str) -> List[FeatureTable]:
-        """
-        Retrieve a list of feature tables from the registry
-
-        Args:
-            project: Filter feature tables based on project name
-
-        Returns:
-            List of feature tables
-        """
-        registry_proto = self._get_registry_proto()
-        feature_tables = []
-        for feature_table_proto in registry_proto.feature_tables:
-            if feature_table_proto.spec.project == project:
-                feature_tables.append(FeatureTable.from_proto(feature_table_proto))
-        return feature_tables
-
     def list_feature_views(
         self, project: str, allow_cache: bool = False
     ) -> List[FeatureView]:
@@ -497,27 +447,6 @@ class Registry:
                     RequestFeatureView.from_proto(request_feature_view_proto)
                 )
         return feature_views
-
-    def get_feature_table(self, name: str, project: str) -> FeatureTable:
-        """
-        Retrieves a feature table.
-
-        Args:
-            name: Name of feature table
-            project: Feast project that this feature table belongs to
-
-        Returns:
-            Returns either the specified feature table, or raises an exception if
-            none is found
-        """
-        registry_proto = self._get_registry_proto()
-        for feature_table_proto in registry_proto.feature_tables:
-            if (
-                feature_table_proto.spec.name == name
-                and feature_table_proto.spec.project == project
-            ):
-                return FeatureTable.from_proto(feature_table_proto)
-        raise FeatureTableNotFoundException(name, project)
 
     def get_feature_view(
         self, name: str, project: str, allow_cache: bool = False
@@ -567,32 +496,6 @@ class Registry:
                     self.commit()
                 return
         raise FeatureServiceNotFoundException(name, project)
-
-    def delete_feature_table(self, name: str, project: str, commit: bool = True):
-        """
-        Deletes a feature table or raises an exception if not found.
-
-        Args:
-            name: Name of feature table
-            project: Feast project that this feature table belongs to
-            commit: Whether the change should be persisted immediately
-        """
-        self._prepare_registry_for_changes()
-        assert self.cached_registry_proto
-
-        for idx, existing_feature_table_proto in enumerate(
-            self.cached_registry_proto.feature_tables
-        ):
-            if (
-                existing_feature_table_proto.spec.name == name
-                and existing_feature_table_proto.spec.project == project
-            ):
-                del self.cached_registry_proto.feature_tables[idx]
-                if commit:
-                    self.commit()
-                return
-
-        raise FeatureTableNotFoundException(name, project)
 
     def delete_feature_view(self, name: str, project: str, commit: bool = True):
         """

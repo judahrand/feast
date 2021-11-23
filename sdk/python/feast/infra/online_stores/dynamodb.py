@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import StrictStr
 from pydantic.typing import Literal
 
-from feast import Entity, FeatureTable, FeatureView, utils
+from feast import Entity, FeatureView, utils
 from feast.infra.online_stores.helpers import compute_entity_id
 from feast.infra.online_stores.online_store import OnlineStore
 from feast.protos.feast.types.EntityKey_pb2 import EntityKey as EntityKeyProto
@@ -53,8 +53,8 @@ class DynamoDBOnlineStore(OnlineStore):
     def update(
         self,
         config: RepoConfig,
-        tables_to_delete: Sequence[Union[FeatureTable, FeatureView]],
-        tables_to_keep: Sequence[Union[FeatureTable, FeatureView]],
+        tables_to_delete: Sequence[FeatureView],
+        tables_to_keep: Sequence[FeatureView],
         entities_to_delete: Sequence[Entity],
         entities_to_keep: Sequence[Entity],
         partial: bool,
@@ -90,7 +90,7 @@ class DynamoDBOnlineStore(OnlineStore):
     def teardown(
         self,
         config: RepoConfig,
-        tables: Sequence[Union[FeatureTable, FeatureView]],
+        tables: Sequence[FeatureView],
         entities: Sequence[Entity],
     ):
         online_config = config.online_store
@@ -103,7 +103,7 @@ class DynamoDBOnlineStore(OnlineStore):
     def online_write_batch(
         self,
         config: RepoConfig,
-        table: Union[FeatureTable, FeatureView],
+        table: FeatureView,
         data: List[
             Tuple[EntityKeyProto, Dict[str, ValueProto], datetime, Optional[datetime]]
         ],
@@ -134,7 +134,7 @@ class DynamoDBOnlineStore(OnlineStore):
     def online_read(
         self,
         config: RepoConfig,
-        table: Union[FeatureTable, FeatureView],
+        table: FeatureView,
         entity_keys: List[EntityKeyProto],
         requested_features: Optional[List[str]] = None,
     ) -> List[Tuple[Optional[datetime], Optional[Dict[str, ValueProto]]]]:
@@ -168,10 +168,7 @@ class DynamoDBOnlineStore(OnlineStore):
         )
 
     def _delete_tables_idempotent(
-        self,
-        dynamodb_resource,
-        config: RepoConfig,
-        tables: Sequence[Union[FeatureTable, FeatureView]],
+        self, dynamodb_resource, config: RepoConfig, tables: Sequence[FeatureView],
     ):
         for table_instance in tables:
             try:

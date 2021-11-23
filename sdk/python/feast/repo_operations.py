@@ -13,7 +13,7 @@ import click
 from click.exceptions import BadParameter
 from google.protobuf.json_format import MessageToDict
 
-from feast import Entity, FeatureTable
+from feast import Entity
 from feast.base_feature_view import BaseFeatureView
 from feast.feature_service import FeatureService
 from feast.feature_store import FeatureStore
@@ -35,7 +35,6 @@ def py_path_to_module(path: Path, repo_root: Path) -> str:
 
 
 class ParsedRepo(NamedTuple):
-    feature_tables: Set[FeatureTable]
     feature_views: Set[FeatureView]
     on_demand_feature_views: Set[OnDemandFeatureView]
     request_feature_views: Set[RequestFeatureView]
@@ -99,7 +98,6 @@ def get_repo_files(repo_root: Path) -> List[Path]:
 def parse_repo(repo_root: Path) -> ParsedRepo:
     """ Collect feature table definitions from feature repo """
     res = ParsedRepo(
-        feature_tables=set(),
         entities=set(),
         feature_views=set(),
         feature_services=set(),
@@ -112,8 +110,6 @@ def parse_repo(repo_root: Path) -> ParsedRepo:
         module = importlib.import_module(module_path)
         for attr_name in dir(module):
             obj = getattr(module, attr_name)
-            if isinstance(obj, FeatureTable):
-                res.feature_tables.add(obj)
             if isinstance(obj, FeatureView):
                 res.feature_views.add(obj)
             elif isinstance(obj, Entity):
@@ -162,9 +158,6 @@ def apply_total(repo_config: RepoConfig, repo_path: Path, skip_source_validation
         odfvs_to_keep,
         odfvs_to_delete,
     ) = _tag_registry_on_demand_feature_views_for_keep_delete(project, registry, repo)
-    tables_to_keep, tables_to_delete = _tag_registry_tables_for_keep_delete(
-        project, registry, repo
-    )
     services_to_keep, services_to_delete = _tag_registry_services_for_keep_delete(
         project, registry, repo
     )
@@ -173,25 +166,19 @@ def apply_total(repo_config: RepoConfig, repo_path: Path, skip_source_validation
 
     # Apply all changes to the registry and infrastructure.
     all_to_apply: List[
-        Union[
-            Entity, BaseFeatureView, FeatureService, OnDemandFeatureView, FeatureTable
-        ]
+        Union[Entity, BaseFeatureView, FeatureService, OnDemandFeatureView]
     ] = []
     all_to_apply.extend(entities_to_keep)
     all_to_apply.extend(views_to_keep)
     all_to_apply.extend(services_to_keep)
     all_to_apply.extend(odfvs_to_keep)
-    all_to_apply.extend(tables_to_keep)
     all_to_delete: List[
-        Union[
-            Entity, BaseFeatureView, FeatureService, OnDemandFeatureView, FeatureTable
-        ]
+        Union[Entity, BaseFeatureView, FeatureService, OnDemandFeatureView]
     ] = []
     all_to_delete.extend(entities_to_delete)
     all_to_delete.extend(views_to_delete)
     all_to_delete.extend(services_to_delete)
     all_to_delete.extend(odfvs_to_delete)
-    all_to_delete.extend(tables_to_delete)
 
     store.apply(all_to_apply, objects_to_delete=all_to_delete, partial=False)
 
@@ -206,10 +193,6 @@ def apply_total(repo_config: RepoConfig, repo_path: Path, skip_source_validation
     for odfv in odfvs_to_delete:
         click.echo(
             f"Deleted on demand feature view {Style.BRIGHT + Fore.GREEN}{odfv.name}{Style.RESET_ALL} from registry"
-        )
-    for table in tables_to_delete:
-        click.echo(
-            f"Deleted feature table {Style.BRIGHT + Fore.GREEN}{table.name}{Style.RESET_ALL} from registry"
         )
     for feature_service in services_to_delete:
         click.echo(
@@ -233,27 +216,18 @@ def apply_total(repo_config: RepoConfig, repo_path: Path, skip_source_validation
         click.echo(
             f"Registered feature service {Style.BRIGHT + Fore.GREEN}{feature_service.name}{Style.RESET_ALL}"
         )
-    # Create tables that should exist
-    for table in tables_to_keep:
-        click.echo(
-            f"Registered feature table {Style.BRIGHT + Fore.GREEN}{table.name}{Style.RESET_ALL}"
-        )
 
     views_to_keep_in_infra = [
         view for view in views_to_keep if isinstance(view, FeatureView)
     ]
-    for name in [view.name for view in repo.feature_tables] + [
-        table.name for table in views_to_keep_in_infra
-    ]:
+    for name in [view.name for view in views_to_keep_in_infra]:
         click.echo(
             f"Deploying infrastructure for {Style.BRIGHT + Fore.GREEN}{name}{Style.RESET_ALL}"
         )
     views_to_delete_from_infra = [
         view for view in views_to_delete if isinstance(view, FeatureView)
     ]
-    for name in [view.name for view in views_to_delete_from_infra] + [
-        table.name for table in tables_to_delete
-    ]:
+    for name in [view.name for view in views_to_delete_from_infra]:
         click.echo(
             f"Removing infrastructure for {Style.BRIGHT + Fore.GREEN}{name}{Style.RESET_ALL}"
         )
@@ -300,18 +274,6 @@ def _tag_registry_on_demand_feature_views_for_keep_delete(
     return odfvs_to_keep, odfvs_to_delete
 
 
-def _tag_registry_tables_for_keep_delete(
-    project: str, registry: Registry, repo: ParsedRepo
-) -> Tuple[Set[FeatureTable], Set[FeatureTable]]:
-    tables_to_keep: Set[FeatureTable] = repo.feature_tables
-    tables_to_delete: Set[FeatureTable] = set()
-    repo_table_names = set(t.name for t in repo.feature_tables)
-    for registry_table in registry.list_feature_tables(project=project):
-        if registry_table.name not in repo_table_names:
-            tables_to_delete.add(registry_table)
-    return tables_to_keep, tables_to_delete
-
-
 def _tag_registry_services_for_keep_delete(
     project: str, registry: Registry, repo: ParsedRepo
 ) -> Tuple[Set[FeatureService], Set[FeatureService]]:
@@ -345,8 +307,6 @@ def registry_dump(repo_config: RepoConfig, repo_path: Path):
         registry_dict["entities"].append(MessageToDict(entity.to_proto()))
     for feature_view in registry.list_feature_views(project=project):
         registry_dict["featureViews"].append(MessageToDict(feature_view.to_proto()))
-    for feature_table in registry.list_feature_tables(project=project):
-        registry_dict["featureTables"].append(MessageToDict(feature_table.to_proto()))
     for feature_service in registry.list_feature_services(project=project):
         registry_dict["featureServices"].append(
             MessageToDict(feature_service.to_proto())
