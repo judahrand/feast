@@ -16,6 +16,7 @@ import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Type, Union
 
+import pyarrow as pa
 from google.protobuf.duration_pb2 import Duration
 
 from feast import utils
@@ -33,6 +34,7 @@ from feast.protos.feast.core.FeatureView_pb2 import (
 from feast.protos.feast.core.FeatureView_pb2 import (
     MaterializationInterval as MaterializationIntervalProto,
 )
+from feast.type_map import feast_value_type_to_pa
 from feast.usage import log_exceptions
 from feast.value_type import ValueType
 
@@ -403,3 +405,16 @@ class FeatureView(BaseFeatureView):
         if len(self.materialization_intervals) == 0:
             return None
         return max([interval[1] for interval in self.materialization_intervals])
+
+    @property
+    def features_schema(self) -> pa.Schema:
+        return pa.schema(
+            fields=[
+                pa.field(
+                    name=feature.name,
+                    type=feast_value_type_to_pa(feature.dtype),
+                    nullable=True,
+                )
+                for feature in self.features
+            ]
+        )
