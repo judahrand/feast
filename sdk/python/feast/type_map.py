@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
@@ -373,28 +372,35 @@ def _proto_value_to_value_type(proto_value: ProtoValue) -> ValueType:
     return type_map[proto_str]
 
 
-def pa_to_feast_value_type(pa_type_as_str: str) -> ValueType:
-    if re.match(r"^timestamp", pa_type_as_str):
-        return ValueType.INT64
+def pa_to_feast_value_type(pa_type: pyarrow.DataType) -> ValueType:
+    orig_pa_type = pa_type  # In case needed for exception
+    is_list = False
+    if pyarrow.types.is_list(pa_type):
+        is_list = True
+        pa_type = pa_type.value_type
 
-    type_map = {
-        "int32": ValueType.INT32,
-        "int64": ValueType.INT64,
-        "double": ValueType.DOUBLE,
-        "float": ValueType.FLOAT,
-        "string": ValueType.STRING,
-        "binary": ValueType.BYTES,
-        "bool": ValueType.BOOL,
-        "list<item: int32>": ValueType.INT32_LIST,
-        "list<item: int64>": ValueType.INT64_LIST,
-        "list<item: double>": ValueType.DOUBLE_LIST,
-        "list<item: float>": ValueType.FLOAT_LIST,
-        "list<item: string>": ValueType.STRING_LIST,
-        "list<item: binary>": ValueType.BYTES_LIST,
-        "list<item: bool>": ValueType.BOOL_LIST,
-        "null": ValueType.NULL,
-    }
-    return type_map[pa_type_as_str]
+    if pyarrow.types.is_timestamp(pa_type):
+        value_type = ValueType.INT64
+    else:
+        type_map = {
+            "int32": ValueType.INT32,
+            "int64": ValueType.INT64,
+            "double": ValueType.DOUBLE,
+            "float": ValueType.FLOAT,
+            "string": ValueType.STRING,
+            "binary": ValueType.BYTES,
+            "bool": ValueType.BOOL,
+            "null": ValueType.NULL,
+        }
+        try:
+            value_type = type_map[pa_type]
+        except KeyError:
+            raise ValueError("Arrow type %s not supported.", orig_pa_type)
+
+    if is_list:
+        value_type = ValueType[value_type.name + "_LIST"]
+
+    return value_type
 
 
 def bq_to_feast_value_type(bq_type_as_str: str) -> ValueType:

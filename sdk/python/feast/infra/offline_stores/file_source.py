@@ -1,5 +1,6 @@
 from typing import Callable, Dict, Iterable, Optional, Tuple
 
+import pyarrow as pa
 from pyarrow._fs import FileSystem
 from pyarrow._s3fs import S3FileSystem
 from pyarrow.parquet import ParquetFile
@@ -133,19 +134,19 @@ class FileSource(DataSource):
         pass
 
     @staticmethod
-    def source_datatype_to_feast_value_type() -> Callable[[str], ValueType]:
+    def source_datatype_to_feast_value_type() -> Callable[[pa.DataType], ValueType]:
         return type_map.pa_to_feast_value_type
 
     def get_table_column_names_and_types(
         self, config: RepoConfig
-    ) -> Iterable[Tuple[str, str]]:
+    ) -> Iterable[Tuple[str, pa.DataType]]:
         filesystem, path = FileSource.create_filesystem_and_path(
             self.path, self._file_options.s3_endpoint_override
         )
         schema = ParquetFile(
             path if filesystem is None else filesystem.open_input_file(path)
         ).schema_arrow
-        return zip(schema.names, map(str, schema.types))
+        return zip(schema.names, schema.types)
 
     @staticmethod
     def create_filesystem_and_path(
