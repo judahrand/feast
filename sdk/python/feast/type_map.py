@@ -403,6 +403,29 @@ def pa_to_feast_value_type(pa_type: pyarrow.DataType) -> ValueType:
     return value_type
 
 
+def feast_value_type_to_pa(value_type: ValueType) -> pyarrow.DataType:
+    is_list = False
+    if value_type.name.endswith("_LIST"):
+        is_list = True
+        value_type = ValueType[value_type.name.replace("_LIST", "")]
+
+    type_map = {
+        ValueType.INT32: pyarrow.int32(),
+        ValueType.INT64: pyarrow.int64(),
+        ValueType.DOUBLE: pyarrow.float64(),
+        ValueType.FLOAT: pyarrow.float32(),
+        ValueType.STRING: pyarrow.string(),
+        ValueType.BYTES: pyarrow.binary(),
+        ValueType.BOOL: pyarrow.bool_(),
+    }
+    pa_type = type_map[value_type]
+
+    if is_list:
+        pa_type = pyarrow.list_(pa_type)
+
+    return pa_type
+
+
 def bq_to_feast_value_type(bq_type_as_str: str) -> ValueType:
     type_map: Dict[str, ValueType] = {
         "DATETIME": ValueType.UNIX_TIMESTAMP,
