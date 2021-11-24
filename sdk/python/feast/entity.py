@@ -17,6 +17,7 @@ from typing import Dict, Optional
 import yaml
 from google.protobuf import json_format
 from google.protobuf.json_format import MessageToDict, MessageToJson
+import pyarrow as pa
 
 from feast.loaders import yaml as feast_yaml
 from feast.protos.feast.core.Entity_pb2 import Entity as EntityV2Proto
@@ -24,6 +25,7 @@ from feast.protos.feast.core.Entity_pb2 import EntityMeta as EntityMetaProto
 from feast.protos.feast.core.Entity_pb2 import EntitySpecV2 as EntitySpecProto
 from feast.usage import log_exceptions
 from feast.value_type import ValueType
+from feast.type_map import feast_value_type_to_pa
 
 
 class Entity:
@@ -329,3 +331,11 @@ class Entity:
         self.join_key = entity.join_key
         self._created_timestamp = entity.created_timestamp
         self._last_updated_timestamp = entity.last_updated_timestamp
+
+    @property
+    def field(self):
+        return pa.field(
+            name=self.name,
+            type=feast_value_type_to_pa(self.value_type),
+            nullable=False,
+        )

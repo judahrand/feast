@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, cast
 
 import pandas as pd
+import pyarrow as pa
 from colorama import Fore, Style
 from tqdm import tqdm
 
@@ -972,8 +973,10 @@ class FeatureStore:
         provider = self._get_provider()
         entities = self._list_entities(allow_cache=True, hide_dummy_entity=False)
         entity_name_to_join_key_map: Dict[str, str] = {}
+        join_key_to_arrow_field_map: Dict[str, pa.Field] = {}
         for entity in entities:
             entity_name_to_join_key_map[entity.name] = entity.join_key
+            join_key_to_arrow_field_map[entity.join_key] = entity.field.with_name(entity.join_key)
         for feature_view in requested_feature_views:
             for entity_name in feature_view.entities:
                 entity = self._registry.get_entity(
@@ -988,16 +991,16 @@ class FeatureStore:
                     entity.join_key, entity.join_key
                 )
                 entity_name_to_join_key_map[entity_name] = join_key
+                join_key_to_arrow_field_map[join_key] = entity.field.with_name(join_key)
 
         needed_request_data, needed_request_fv_features = self.get_needed_request_data(
             grouped_odfv_refs, grouped_request_fv_refs
         )
 
-        join_key_rows = []
+        join_keys: Dict[str, List[Any]] = {}
         request_data_features: Dict[str, List[Any]] = {}
         # Entity rows may be either entities or request data.
         for row in entity_rows:
-            join_key_row = {}
             for entity_name, entity_value in row.items():
                 # Found request data
                 if (
@@ -1012,41 +1015,51 @@ class FeatureStore:
                     join_key = entity_name_to_join_key_map[entity_name]
                 except KeyError:
                     raise EntityNotFoundException(entity_name, self.project)
-                join_key_row[join_key] = entity_value
-                if entityless_case:
-                    join_key_row[DUMMY_ENTITY_ID] = DUMMY_ENTITY_VAL
-            if len(join_key_row) > 0:
-                # May be empty if this entity row was request data
-                join_key_rows.append(join_key_row)
+                if join_key not in join_keys:
+                    join_keys[join_key] = []
+                join_keys[join_key].append(entity_value)
+            if entityless_case:
+                join_keys[DUMMY_ENTITY_ID] = [DUMMY_ENTITY_VAL] * len(entity_rows)
+
+        for col in join_keys.values():
+            try:
+                assert len(col) == len(entity_rows)
+            except AssertionError:
+                raise ValueError("All entity rows must have the same fields.")
+
+        join_key_table_schema = pa.schema([join_key_to_arrow_field_map[k] for k in join_keys.keys()])
+        join_key_table = pa.Table.from_arrays(list(join_keys.values()), schema=join_key_table_schema)
 
         self.ensure_request_data_values_exist(
             needed_request_data, needed_request_fv_features, request_data_features
         )
 
-        entity_row_proto_list = _infer_online_entity_rows(join_key_rows)
+        # entity_row_proto_list = _infer_online_entity_rows(join_key_rows)
 
-        union_of_entity_keys: List[EntityKeyProto] = []
-        result_rows: List[GetOnlineFeaturesResponse.FieldValues] = []
+        # union_of_entity_keys: List[EntityKeyProto] = []
+        # result_rows: List[GetOnlineFeaturesResponse.FieldValues] = []
 
-        for entity_row_proto in entity_row_proto_list:
-            # Create a list of entity keys to filter down for each feature view at lookup time.
-            union_of_entity_keys.append(_entity_row_to_key(entity_row_proto))
-            # Also create entity values to append to the result
-            result_rows.append(_entity_row_to_field_values(entity_row_proto))
+        # for entity_row_proto in entity_row_proto_list:
+        #     # Create a list of entity keys to filter down for each feature view at lookup time.
+        #     union_of_entity_keys.append(_entity_row_to_key(entity_row_proto))
+        #     # Also create entity values to append to the result
+        #     result_rows.append(_entity_row_to_field_values(entity_row_proto))
+
+
 
         for table, requested_features in grouped_refs:
-            table_join_keys = [
-                entity_name_to_join_key_map[entity_name]
-                for entity_name in table.entities
-            ]
-            self._populate_result_rows_from_feature_view(
+            table_join_keys = join_key_table.select(
+                [
+                    entity_name_to_join_key_map[entity_name]
+                    for entity_name in table.entities
+                ]
+            )
+            requested_features_table = self._get_features_from_feature_view(
                 table_join_keys,
                 full_feature_names,
                 provider,
                 requested_features,
-                result_rows,
                 table,
-                union_of_entity_keys,
             )
 
         requested_result_row_names = self._get_requested_result_fields(
@@ -1163,23 +1176,18 @@ class FeatureStore:
                 feature_names=missing_features
             )
 
-    def _populate_result_rows_from_feature_view(
+    def _get_features_from_feature_view(
         self,
-        table_join_keys: List[str],
+        table_join_keys: pa.Table,
         full_feature_names: bool,
         provider: Provider,
         requested_features: List[str],
-        result_rows: List[GetOnlineFeaturesResponse.FieldValues],
         table: FeatureView,
-        union_of_entity_keys: List[EntityKeyProto],
     ):
-        entity_keys = _get_table_entity_keys(
-            table, union_of_entity_keys, table_join_keys
-        )
         read_rows = provider.online_read(
             config=self.config,
             table=table,
-            entity_keys=entity_keys,
+            entity_keys=table_join_keys,
             requested_features=requested_features,
         )
         # Each row is a set of features for a given entity key

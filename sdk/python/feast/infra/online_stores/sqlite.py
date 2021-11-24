@@ -19,8 +19,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import pytz
+import pyarrow as pa
 from pydantic import StrictStr
-from pydantic.schema import Literal
+from pydantic.schema import Literal, schema
 
 from feast import Entity
 from feast.feature_view import FeatureView
@@ -88,44 +89,42 @@ class SqliteOnlineStore(OnlineStore):
         conn = self._get_conn(config)
 
         project = config.project
-
+        print("writing", table.name)
         with conn:
             for entity_key, values, timestamp, created_ts in data:
-                entity_key_bin = serialize_entity_key(entity_key)
+                entity_key_bin =entity_key.serialize()
+                values_bin = values.serialize()
                 timestamp = _to_naive_utc(timestamp)
                 if created_ts is not None:
                     created_ts = _to_naive_utc(created_ts)
 
-                for feature_name, val in values.items():
-                    conn.execute(
-                        f"""
-                            UPDATE {_table_id(project, table)}
-                            SET value = ?, event_ts = ?, created_ts = ?
-                            WHERE (entity_key = ? AND feature_name = ?)
-                        """,
-                        (
-                            # SET
-                            val.SerializeToString(),
-                            timestamp,
-                            created_ts,
-                            # WHERE
-                            entity_key_bin,
-                            feature_name,
-                        ),
-                    )
+                conn.execute(
+                    f"""
+                        UPDATE {_table_id(project, table)}
+                        SET value = ?, event_ts = ?, created_ts = ?
+                        WHERE (entity_key = ?)
+                    """,
+                    (
+                        # SET
+                        values_bin,
+                        timestamp,
+                        created_ts,
+                        # WHERE
+                        entity_key_bin,
+                    ),
+                )
 
-                    conn.execute(
-                        f"""INSERT OR IGNORE INTO {_table_id(project, table)}
-                            (entity_key, feature_name, value, event_ts, created_ts)
-                            VALUES (?, ?, ?, ?, ?)""",
-                        (
-                            entity_key_bin,
-                            feature_name,
-                            val.SerializeToString(),
-                            timestamp,
-                            created_ts,
-                        ),
-                    )
+                conn.execute(
+                    f"""INSERT OR IGNORE INTO {_table_id(project, table)}
+                        (entity_key, value, event_ts, created_ts)
+                        VALUES (?, ?, ?, ?)""",
+                    (
+                        entity_key_bin,
+                        values_bin,
+                        timestamp,
+                        created_ts,
+                    ),
+                )
                 if progress:
                     progress(1)
 
@@ -139,38 +138,31 @@ class SqliteOnlineStore(OnlineStore):
     ) -> List[Tuple[Optional[datetime], Optional[Dict[str, ValueProto]]]]:
         conn = self._get_conn(config)
         cur = conn.cursor()
-
-        result: List[Tuple[Optional[datetime], Optional[Dict[str, ValueProto]]]] = []
+        entity_keys_schema = entity_keys.schema
+        entity_keys_bin = [entity_key.serialize() for entity_key in entity_keys.to_batches(1)]
 
         with tracing_span(name="remote_call"):
             # Fetch all entities in one go
             cur.execute(
-                f"SELECT entity_key, feature_name, value, event_ts "
+                f"SELECT entity_key, value, event_ts "
                 f"FROM {_table_id(config.project, table)} "
                 f"WHERE entity_key IN ({','.join('?' * len(entity_keys))}) "
                 f"ORDER BY entity_key",
-                [serialize_entity_key(entity_key) for entity_key in entity_keys],
+                entity_keys_bin,
             )
             rows = cur.fetchall()
 
-        rows = {
-            k: list(group) for k, group in itertools.groupby(rows, key=lambda r: r[0])
-        }
-        for entity_key in entity_keys:
-            entity_key_bin = serialize_entity_key(entity_key)
-            res = {}
-            res_ts = None
-            for _, feature_name, val_bin, ts in rows.get(entity_key_bin, []):
-                val = ValueProto()
-                val.ParseFromString(val_bin)
-                res[feature_name] = val
-                res_ts = ts
+        result = [
+            {k: v[0] for k, v in pa.ipc.read_record_batch(row[0], schema=entity_keys_schema).to_pydict().items()}
+            for row in rows
+        ]
+        for idx, res_row in enumerate(result):
+            res_row.update({
+                k: v[0]
+                for k, v in pa.ipc.read_record_batch(rows[idx][1], schema=table.features_schema).to_pydict().items()
+            })
 
-            if not res:
-                result.append((None, None))
-            else:
-                result.append((res_ts, res))
-        return result
+        return list(zip([row[2] for row in rows], result))
 
     @log_exceptions_and_usage(online_store="sqlite")
     def update(
@@ -187,7 +179,7 @@ class SqliteOnlineStore(OnlineStore):
 
         for table in tables_to_keep:
             conn.execute(
-                f"CREATE TABLE IF NOT EXISTS {_table_id(project, table)} (entity_key BLOB, feature_name TEXT, value BLOB, event_ts timestamp, created_ts timestamp,  PRIMARY KEY(entity_key, feature_name))"
+                f"CREATE TABLE IF NOT EXISTS {_table_id(project, table)} (entity_key BLOB, value BLOB, event_ts timestamp, created_ts timestamp,  PRIMARY KEY(entity_key))"
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {_table_id(project, table)}_ek ON {_table_id(project, table)} (entity_key);"

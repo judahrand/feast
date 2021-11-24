@@ -43,7 +43,7 @@ warnings.simplefilter("once", DeprecationWarning)
 # DUMMY_ENTITY is a placeholder entity used in entityless FeatureViews
 DUMMY_ENTITY_ID = "__dummy_id"
 DUMMY_ENTITY_NAME = "__dummy"
-DUMMY_ENTITY_VAL = ""
+DUMMY_ENTITY_VAL = 0
 
 
 class FeatureView(BaseFeatureView):

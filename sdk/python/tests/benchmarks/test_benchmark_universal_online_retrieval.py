@@ -29,6 +29,7 @@ def test_online_retrieval(environment, universal_data_sources, benchmark):
     feast_objects = []
     feast_objects.extend(feature_views.values())
     feast_objects.extend([driver(), customer(), location(), feature_service])
+    fs.teardown()
     fs.apply(feast_objects)
     fs.materialize(environment.start_date, environment.end_date)
 
